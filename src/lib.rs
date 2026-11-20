@@ -43,6 +43,12 @@ pub fn status_path() -> PathBuf {
     runtime_dir().join("status.json")
 }
 
+/// What visiond last wrote to each output, so it can tell its own state
+/// from another program's. Lives in tmpfs, like the hardware state itself.
+pub fn applied_path() -> PathBuf {
+    runtime_dir().join("applied.json")
+}
+
 pub fn lock_path() -> PathBuf {
     runtime_dir().join("visiond.lock")
 }
@@ -67,11 +73,19 @@ pub struct Config {
     pub enabled: bool,
     /// Per-connector settings, keyed by connector name ("eDP-1", "HDMI-A-1").
     pub outputs: BTreeMap<String, Adjust>,
+    /// User-created presets, in creation order.
+    pub presets: Vec<Preset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Preset {
+    pub name: String,
+    pub adjust: Adjust,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, outputs: BTreeMap::new() }
+        Config { enabled: true, outputs: BTreeMap::new(), presets: Vec::new() }
     }
 }
 
@@ -116,6 +130,9 @@ pub struct OutputInfo {
     pub driver: String,
     pub supported: bool,
     pub active: bool,
+    /// Another program keeps changing this display's color pipeline.
+    #[serde(default)]
+    pub conflict: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -124,6 +141,11 @@ pub struct Status {
     pub state: State,
     pub message: String,
     pub outputs: Vec<OutputInfo>,
+    /// Process name of the DRM master ("mango", "Hyprland", …).
+    #[serde(default)]
+    pub compositor: String,
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 impl Status {
