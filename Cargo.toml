@@ -3,10 +3,23 @@ name = "vision"
 version = "0.1.0"
 edition = "2024"
 description = "Display saturation, hue, temperature and tone control for Wayland, applied in display hardware"
+repository = "https://github.com/jeebuscrossaint/vision"
 
 [dependencies]
-eframe = "0.37.0"
+# Lean egui: OpenGL (glow) instead of wgpu, Wayland only, no accessibility
+# bridge (zbus), no system font scanning, no client-side decorations.
+eframe = { version = "0.37.0", default-features = false, features = [
+    "glow",
+    "wayland",
+    "default_fonts",
+    "clipboard",
+] }
 libc = "0.2.191"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-toml = "1.2.1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

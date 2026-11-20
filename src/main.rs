@@ -1,7 +1,7 @@
 //! Vision: display color control panel (saturation, hue, temperature,
 //! brightness, contrast, gamma, RGB gains) for Wayland.
 //!
-//! The GUI is unprivileged. It only edits ~/.config/vision/config.toml; the
+//! The GUI is unprivileged. It only edits ~/.config/vision/config.json; the
 //! `visiond` helper picks up every write instantly and programs the display
 //! hardware, so slider drags are live.
 
@@ -429,6 +429,8 @@ struct App {
     password: String,
     grant_rx: Option<mpsc::Receiver<Result<(), String>>>,
     grant_err: Option<String>,
+    /// mtime of the config as we last read or wrote it.
+    config_mtime: Option<std::time::SystemTime>,
 }
 
 impl App {
@@ -450,6 +452,7 @@ impl App {
             password: String::new(),
             grant_rx: None,
             grant_err: None,
+            config_mtime: vision::config_mtime(),
         };
         install_desktop_entry();
         app.poll();
@@ -479,6 +482,15 @@ impl App {
             spawn_daemon();
         }
         self.status = if self.daemon_up { Status::load() } else { None };
+        // The file is the single source of truth: pick up outside edits
+        // (another Vision window, a hand edit) unless we have unsaved changes.
+        let m = vision::config_mtime();
+        if m != self.config_mtime && !self.dirty {
+            if let Ok(c) = Config::load() {
+                self.config = c;
+            }
+            self.config_mtime = m;
+        }
         let outs = self.outputs();
         if !outs.iter().any(|(n, _)| *n == self.selected) {
             self.selected = outs.first().map(|o| o.0.clone()).unwrap_or_default();
@@ -495,6 +507,7 @@ impl App {
             }
             self.dirty = false;
             self.last_write = Instant::now();
+            self.config_mtime = vision::config_mtime();
         } else {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -538,6 +551,41 @@ impl App {
                 ui.label(egui::RichText::new(if on { "On" } else { "Off" }).size(13.0).color(MUTED));
             });
         });
+    }
+
+    /// Everything that differs from stock on the selected display, each
+    /// clickable to reset, so nothing is ever hidden further down the page.
+    fn adjusted_row(&mut self, ui: &mut Ui) {
+        let mut adj = self.current();
+        let mut changed = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            let muted = |t: &str| egui::RichText::new(t).size(12.5).color(MUTED);
+            if !self.config.enabled {
+                ui.label(muted("Off: every display shows stock colors"));
+                return;
+            }
+            let specs: Vec<&Spec> = COLOR_SPECS.iter().chain(TONE_SPECS).chain(CHANNEL_SPECS).collect();
+            let modified: Vec<&Spec> = specs
+                .into_iter()
+                .filter(|s| (*s.field.get(&mut adj) - *s.field.get(&mut Adjust::default())).abs() > 1e-6)
+                .collect();
+            if modified.is_empty() {
+                ui.label(muted("No adjustments: stock colors"));
+                return;
+            }
+            ui.label(muted("Adjusted:"));
+            for s in modified {
+                let text = format!("{} {}  ×", s.label, (s.fmt)(*s.field.get(&mut adj)));
+                if chip(ui, &text, None, true).on_hover_text("Reset").clicked() {
+                    *s.field.get(&mut adj) = *s.field.get(&mut Adjust::default());
+                    changed = true;
+                }
+            }
+        });
+        if changed {
+            self.set_current(adj);
+        }
     }
 
     fn displays(&mut self, ui: &mut Ui) {
@@ -816,7 +864,9 @@ impl eframe::App for App {
             ui.set_min_size(ui.available_size());
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 self.header(ui);
-                ui.add_space(14.0);
+                ui.add_space(10.0);
+                self.adjusted_row(ui);
+                ui.add_space(12.0);
                 if self.needs_setup() || self.grant_rx.is_some() {
                     self.setup_card(ui);
                     ui.add_space(12.0);

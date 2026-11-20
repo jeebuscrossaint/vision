@@ -1,5 +1,5 @@
 //! visiond: keeps the display hardware's color pipeline in sync with
-//! ~/.config/vision/config.toml.
+//! ~/.config/vision/config.json.
 //!
 //!   visiond          run forever (watches the config, re-applies after
 //!                    compositor restarts, hotplug, suspend, VT switches)

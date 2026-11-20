@@ -23,7 +23,12 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn config_path() -> PathBuf {
-    config_dir().join("config.toml")
+    config_dir().join("config.json")
+}
+
+/// Modification time of the config file, used to notice outside edits.
+pub fn config_mtime() -> Option<std::time::SystemTime> {
+    fs::metadata(config_path()).and_then(|m| m.modified()).ok()
 }
 
 pub fn runtime_dir() -> PathBuf {
@@ -73,14 +78,14 @@ impl Default for Config {
 impl Config {
     pub fn load() -> io::Result<Config> {
         match fs::read_to_string(config_path()) {
-            Ok(s) => toml::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+            Ok(s) => serde_json::from_str(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(e),
         }
     }
 
     pub fn save(&self) -> io::Result<()> {
-        let s = toml::to_string_pretty(self).map_err(io::Error::other)?;
+        let s = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         write_atomic(&config_path(), s.as_bytes())
     }
 
