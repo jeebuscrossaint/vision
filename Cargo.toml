@@ -1,0 +1,12 @@
+[package]
+name = "vision"
+version = "0.1.0"
+edition = "2024"
+description = "Display saturation, hue, temperature and tone control for Wayland, applied in display hardware"
+
+[dependencies]
+eframe = "0.37.0"
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.1"

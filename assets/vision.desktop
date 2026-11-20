@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Vision
+GenericName=Display Color
+Comment=Adjust display saturation, hue, temperature, brightness, contrast and gamma
+Exec=vision
+Icon=vision
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=saturation;vibrance;color;display;monitor;gamma;contrast;brightness;
+StartupWMClass=vision
