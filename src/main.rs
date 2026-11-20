@@ -17,6 +17,9 @@ use eframe::egui::{
     self, Align, Color32, CornerRadius, CursorIcon, FontId, Key, Layout, Margin, Mesh, Rect, Sense, Stroke,
     StrokeKind, Ui, Vec2, pos2, vec2,
 };
+mod cli;
+
+use vision::color::Field;
 use vision::{Adjust, Config, Preset, State, Status};
 
 // ---------------------------------------------------------------------------
@@ -63,103 +66,20 @@ fn muted(t: &str) -> egui::RichText {
 // Slider definitions
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
-enum Field {
-    Saturation,
-    Hue,
-    Temperature,
-    Brightness,
-    Contrast,
-    Gamma,
-    Red,
-    Green,
-    Blue,
-}
-
-impl Field {
-    fn get(self, a: &mut Adjust) -> &mut f64 {
-        match self {
-            Field::Saturation => &mut a.saturation,
-            Field::Hue => &mut a.hue,
-            Field::Temperature => &mut a.temperature,
-            Field::Brightness => &mut a.brightness,
-            Field::Contrast => &mut a.contrast,
-            Field::Gamma => &mut a.gamma,
-            Field::Red => &mut a.red,
-            Field::Green => &mut a.green,
-            Field::Blue => &mut a.blue,
-        }
-    }
-
-    fn default_value(self) -> f64 {
-        *self.get(&mut Adjust::default())
-    }
-}
-
 struct Spec {
-    label: &'static str,
     field: Field,
-    min: f64,
-    max: f64,
-    step: f64,
-    /// Multiplier between stored and displayed value (100 for percentages).
-    scale: f64,
-    fmt: fn(f64) -> String,
     track: fn() -> Vec<Color32>,
 }
 
-impl Spec {
-    /// Parse what the user typed ("140", "140%", "-20°", "5000K").
-    fn parse(&self, text: &str) -> Option<f64> {
-        let t: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
-        let v = t.parse::<f64>().ok()? / self.scale;
-        Some(v.clamp(self.min, self.max))
-    }
-
-    fn snap(&self, v: f64) -> f64 {
-        ((v / self.step).round() * self.step).clamp(self.min, self.max)
-    }
-}
-
-fn pct(v: f64) -> String {
-    format!("{:.0}%", v * 100.0)
-}
-fn signed_pct(v: f64) -> String {
-    format!("{:+.0}", v * 100.0)
-}
 fn plain() -> Vec<Color32> {
     vec![]
 }
 
 const COLOR_SPECS: &[Spec] = &[
+    Spec { field: Field::Saturation, track: || vec![hex(0x7a7a7a), hex(0xb05a8a), hex(0xff2d8a), hex(0xff0066)] },
+    Spec { field: Field::Hue, track: || (0..=12).map(|i| hsv(180.0 + i as f32 * 30.0, 0.75, 0.95)).collect() },
     Spec {
-        label: "Saturation",
-        field: Field::Saturation,
-        min: 0.0,
-        max: 3.0,
-        step: 0.01,
-        scale: 100.0,
-        fmt: pct,
-        track: || vec![hex(0x7a7a7a), hex(0xb05a8a), hex(0xff2d8a), hex(0xff0066)],
-    },
-    Spec {
-        label: "Hue",
-        field: Field::Hue,
-        min: -180.0,
-        max: 180.0,
-        step: 1.0,
-        scale: 1.0,
-        fmt: |v| format!("{v:+.0}°"),
-        track: || (0..=12).map(|i| hsv(180.0 + i as f32 * 30.0, 0.75, 0.95)).collect(),
-    },
-    Spec {
-        label: "Temperature",
         field: Field::Temperature,
-        min: 2700.0,
-        max: 10000.0,
-        step: 50.0,
-        scale: 1.0,
-        fmt: |v| format!("{v:.0} K"),
         track: || {
             (0..=10)
                 .map(|i| {
@@ -172,15 +92,15 @@ const COLOR_SPECS: &[Spec] = &[
 ];
 
 const TONE_SPECS: &[Spec] = &[
-    Spec { label: "Brightness", field: Field::Brightness, min: -0.5, max: 0.5, step: 0.01, scale: 100.0, fmt: signed_pct, track: plain },
-    Spec { label: "Contrast", field: Field::Contrast, min: 0.5, max: 1.5, step: 0.01, scale: 100.0, fmt: pct, track: plain },
-    Spec { label: "Gamma", field: Field::Gamma, min: 0.4, max: 2.5, step: 0.01, scale: 1.0, fmt: |v| format!("{v:.2}"), track: plain },
+    Spec { field: Field::Brightness, track: plain },
+    Spec { field: Field::Contrast, track: plain },
+    Spec { field: Field::Gamma, track: plain },
 ];
 
 const CHANNEL_SPECS: &[Spec] = &[
-    Spec { label: "Red", field: Field::Red, min: 0.5, max: 1.5, step: 0.01, scale: 100.0, fmt: pct, track: || vec![hex(0x3a1010), hex(0xff4040)] },
-    Spec { label: "Green", field: Field::Green, min: 0.5, max: 1.5, step: 0.01, scale: 100.0, fmt: pct, track: || vec![hex(0x0f3315), hex(0x40e060)] },
-    Spec { label: "Blue", field: Field::Blue, min: 0.5, max: 1.5, step: 0.01, scale: 100.0, fmt: pct, track: || vec![hex(0x101a3a), hex(0x4a7dff)] },
+    Spec { field: Field::Red, track: || vec![hex(0x3a1010), hex(0xff4040)] },
+    Spec { field: Field::Green, track: || vec![hex(0x0f3315), hex(0x40e060)] },
+    Spec { field: Field::Blue, track: || vec![hex(0x101a3a), hex(0x4a7dff)] },
 ];
 
 fn all_specs() -> impl Iterator<Item = &'static Spec> {
@@ -218,12 +138,12 @@ struct ValueEdit {
 /// and click-the-number-to-type. Returns true when the value changed.
 fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdit>) -> bool {
     let default = spec.field.default_value();
-    let mut value = *spec.field.get(adj);
+    let mut value = spec.field.get(adj);
     let mut changed = false;
     let modified = (value - default).abs() > 1e-6;
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(spec.label).size(14.0).color(TEXT));
+        ui.label(egui::RichText::new(spec.field.label()).size(14.0).color(TEXT));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if modified {
                 let r = ui
@@ -236,7 +156,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
                 }
             }
             match edit {
-                Some(e) if e.label == spec.label => {
+                Some(e) if e.label == spec.field.label() => {
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut e.text)
                             .font(FontId::monospace(14.0))
@@ -248,7 +168,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
                     }
                     if r.lost_focus() {
                         if !ui.input(|i| i.key_pressed(Key::Escape)) {
-                            if let Some(v) = spec.parse(&e.text) {
+                            if let Some(v) = spec.field.parse(&e.text) {
                                 value = v;
                                 changed = true;
                             }
@@ -260,7 +180,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
                     let r = ui
                         .add(
                             egui::Label::new(
-                                egui::RichText::new((spec.fmt)(value))
+                                egui::RichText::new(spec.field.format(value))
                                     .size(14.0)
                                     .monospace()
                                     .color(if modified { ACCENT } else { MUTED }),
@@ -270,7 +190,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
                         .on_hover_cursor(CursorIcon::Text)
                         .on_hover_text("Click to type a value");
                     if r.clicked() {
-                        *edit = Some(ValueEdit { label: spec.label, text: (spec.fmt)(value), fresh: true });
+                        *edit = Some(ValueEdit { label: spec.field.label(), text: spec.field.format(value), fresh: true });
                     }
                 }
             }
@@ -278,10 +198,10 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
     });
 
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-    let id = egui::Id::unique(("vision-slider", spec.label));
+    let id = egui::Id::unique(("vision-slider", spec.field.label()));
     let resp = ui.interact(rect, id, Sense::click_and_drag()).on_hover_cursor(CursorIcon::PointingHand);
     let inner = rect.shrink2(vec2(9.0, 0.0));
-    let to_x = |v: f64| inner.left() + inner.width() * ((v - spec.min) / (spec.max - spec.min)) as f32;
+    let to_x = |v: f64| inner.left() + inner.width() * ((v - spec.field.min()) / (spec.field.max() - spec.field.min())) as f32;
 
     if resp.double_clicked() {
         value = default;
@@ -290,7 +210,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
         resp.request_focus();
         if let Some(p) = resp.interact_pointer_pos() {
             let t = ((p.x - inner.left()) / inner.width()).clamp(0.0, 1.0) as f64;
-            let mut v = spec.snap(spec.min + t * (spec.max - spec.min));
+            let mut v = spec.field.snap(spec.field.min() + t * (spec.field.max() - spec.field.min()));
             // Gentle snap to the default so "back to normal" is easy.
             if (to_x(v) - to_x(default)).abs() < 5.0 {
                 v = default;
@@ -317,7 +237,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
             (up as i32 - down as i32) as f64 * n
         });
         if delta != 0.0 {
-            value = spec.snap(value + delta * spec.step);
+            value = spec.field.snap(value + delta * spec.field.step());
             changed = true;
         }
     }
@@ -335,7 +255,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
                 s
             });
             if steps != 0.0 {
-                value = spec.snap(value + steps as f64 * spec.step);
+                value = spec.field.snap(value + steps as f64 * spec.field.step());
                 changed = true;
             }
         }
@@ -361,7 +281,7 @@ fn slider(ui: &mut Ui, spec: &Spec, adj: &mut Adjust, edit: &mut Option<ValueEdi
     ui.add_space(6.0);
 
     if changed {
-        *spec.field.get(adj) = value;
+        spec.field.set(adj, value);
     }
     changed
 }
@@ -437,20 +357,6 @@ fn btn(text: &str, primary: bool) -> egui::Button<'static> {
 
 fn button(ui: &mut Ui, text: &str, primary: bool) -> egui::Response {
     ui.add(btn(text, primary)).on_hover_cursor(CursorIcon::PointingHand)
-}
-
-fn builtin_presets() -> Vec<(&'static str, Adjust)> {
-    let d = Adjust::default();
-    vec![
-        ("Standard", d),
-        ("Vivid", Adjust { saturation: 1.35, contrast: 1.04, ..d }),
-        ("Punchy", Adjust { saturation: 1.7, contrast: 1.08, ..d }),
-        ("Cinema", Adjust { saturation: 0.92, contrast: 1.08, gamma: 0.92, temperature: 6100.0, ..d }),
-        ("Warm", Adjust { temperature: 5200.0, ..d }),
-        ("Cool", Adjust { temperature: 8000.0, ..d }),
-        ("Night", Adjust { temperature: 3400.0, saturation: 0.9, ..d }),
-        ("Grayscale", Adjust { saturation: 0.0, ..d }),
-    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -754,16 +660,16 @@ impl App {
                 return;
             }
             let modified: Vec<&Spec> =
-                all_specs().filter(|s| (*s.field.get(&mut adj) - s.field.default_value()).abs() > 1e-6).collect();
+                all_specs().filter(|s| (s.field.get(&adj) - s.field.default_value()).abs() > 1e-6).collect();
             if modified.is_empty() {
                 ui.label(muted("No adjustments: stock colors"));
                 return;
             }
             ui.label(muted("Adjusted:"));
             for s in modified {
-                let text = format!("{} {}  ×", s.label, (s.fmt)(*s.field.get(&mut adj)));
+                let text = format!("{} {}  ×", s.field.label(), s.field.format(s.field.get(&adj)));
                 if chip(ui, &text, None, true).on_hover_text("Reset").clicked() {
-                    *s.field.get(&mut adj) = s.field.default_value();
+                    s.field.set(&mut adj, s.field.default_value());
                     changed = true;
                 }
             }
@@ -847,7 +753,7 @@ impl App {
         card(ui, "Presets", |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                for (name, p) in builtin_presets() {
+                for (name, p) in vision::builtin_presets() {
                     if chip(ui, name, None, cur == p).clicked() {
                         apply = Some(p);
                     }
@@ -1033,9 +939,7 @@ impl App {
             self.grant_err = Some("Couldn't find visiond next to the vision binary".into());
             return;
         }
-        let Some(setcap) =
-            ["/usr/bin/setcap", "/usr/sbin/setcap", "/sbin/setcap"].iter().map(PathBuf::from).find(|p| p.exists())
-        else {
+        let Some(setcap) = cli::setcap_path() else {
             self.grant_err = Some("setcap not found (install libcap)".into());
             return;
         };
@@ -1225,6 +1129,11 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    cli::install_fish_completions();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        std::process::exit(cli::run(args));
+    }
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Vision")

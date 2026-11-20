@@ -167,6 +167,189 @@ impl Adjust {
     }
 }
 
+/// One adjustable value, with everything the GUI and CLI need to show,
+/// parse and clamp it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Saturation,
+    Hue,
+    Temperature,
+    Brightness,
+    Contrast,
+    Gamma,
+    Red,
+    Green,
+    Blue,
+}
+
+impl Field {
+    pub const ALL: [Field; 9] = [
+        Field::Saturation,
+        Field::Hue,
+        Field::Temperature,
+        Field::Brightness,
+        Field::Contrast,
+        Field::Gamma,
+        Field::Red,
+        Field::Green,
+        Field::Blue,
+    ];
+
+    /// Command-line name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Field::Saturation => "saturation",
+            Field::Hue => "hue",
+            Field::Temperature => "temperature",
+            Field::Brightness => "brightness",
+            Field::Contrast => "contrast",
+            Field::Gamma => "gamma",
+            Field::Red => "red",
+            Field::Green => "green",
+            Field::Blue => "blue",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Field::Saturation => "Saturation",
+            Field::Hue => "Hue",
+            Field::Temperature => "Temperature",
+            Field::Brightness => "Brightness",
+            Field::Contrast => "Contrast",
+            Field::Gamma => "Gamma",
+            Field::Red => "Red",
+            Field::Green => "Green",
+            Field::Blue => "Blue",
+        }
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Field::Saturation => "Color intensity, 0-300% (100% = stock)",
+            Field::Hue => "Hue rotation, -180..180 degrees",
+            Field::Temperature => "White point, 2700-10000 K (6500 = stock)",
+            Field::Brightness => "Brightness offset, -50..+50",
+            Field::Contrast => "Contrast, 50-150%",
+            Field::Gamma => "Gamma, 0.40-2.50 (>1 brightens midtones)",
+            Field::Red => "Red gain, 50-150%",
+            Field::Green => "Green gain, 50-150%",
+            Field::Blue => "Blue gain, 50-150%",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Field> {
+        let s = s.to_ascii_lowercase();
+        let alias = match s.as_str() {
+            "sat" | "vibrance" => "saturation",
+            "temp" | "kelvin" => "temperature",
+            "bright" => "brightness",
+            "r" => "red",
+            "g" => "green",
+            "b" => "blue",
+            other => other,
+        };
+        Field::ALL.into_iter().find(|f| f.name() == alias)
+    }
+
+    pub fn min(self) -> f64 {
+        match self {
+            Field::Saturation => 0.0,
+            Field::Hue => -180.0,
+            Field::Temperature => 2700.0,
+            Field::Brightness => -0.5,
+            Field::Contrast | Field::Red | Field::Green | Field::Blue => 0.5,
+            Field::Gamma => 0.4,
+        }
+    }
+
+    pub fn max(self) -> f64 {
+        match self {
+            Field::Saturation => 3.0,
+            Field::Hue => 180.0,
+            Field::Temperature => 10000.0,
+            Field::Brightness => 0.5,
+            Field::Contrast | Field::Red | Field::Green | Field::Blue => 1.5,
+            Field::Gamma => 2.5,
+        }
+    }
+
+    pub fn step(self) -> f64 {
+        match self {
+            Field::Hue => 1.0,
+            Field::Temperature => 50.0,
+            _ => 0.01,
+        }
+    }
+
+    /// Multiplier between the stored value and what people see/type.
+    pub fn scale(self) -> f64 {
+        match self {
+            Field::Hue | Field::Temperature | Field::Gamma => 1.0,
+            _ => 100.0,
+        }
+    }
+
+    pub fn get(self, a: &Adjust) -> f64 {
+        match self {
+            Field::Saturation => a.saturation,
+            Field::Hue => a.hue,
+            Field::Temperature => a.temperature,
+            Field::Brightness => a.brightness,
+            Field::Contrast => a.contrast,
+            Field::Gamma => a.gamma,
+            Field::Red => a.red,
+            Field::Green => a.green,
+            Field::Blue => a.blue,
+        }
+    }
+
+    pub fn set(self, a: &mut Adjust, v: f64) {
+        let v = v.clamp(self.min(), self.max());
+        match self {
+            Field::Saturation => a.saturation = v,
+            Field::Hue => a.hue = v,
+            Field::Temperature => a.temperature = v,
+            Field::Brightness => a.brightness = v,
+            Field::Contrast => a.contrast = v,
+            Field::Gamma => a.gamma = v,
+            Field::Red => a.red = v,
+            Field::Green => a.green = v,
+            Field::Blue => a.blue = v,
+        }
+    }
+
+    pub fn default_value(self) -> f64 {
+        self.get(&Adjust::default())
+    }
+
+    pub fn snap(self, v: f64) -> f64 {
+        ((v / self.step()).round() * self.step()).clamp(self.min(), self.max())
+    }
+
+    pub fn format(self, v: f64) -> String {
+        match self {
+            Field::Hue => format!("{v:+.0}°"),
+            Field::Temperature => format!("{v:.0} K"),
+            Field::Gamma => format!("{v:.2}"),
+            Field::Brightness => format!("{:+.0}", v * 100.0),
+            _ => format!("{:.0}%", v * 100.0),
+        }
+    }
+
+    /// Parse a number in display units ("140", "140%", "-20°", "5000K"),
+    /// without clamping.
+    pub fn parse_raw(self, text: &str) -> Option<f64> {
+        let t: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+        Some(t.parse::<f64>().ok()? / self.scale())
+    }
+
+    /// Parse and clamp to the valid range.
+    pub fn parse(self, text: &str) -> Option<f64> {
+        self.parse_raw(text).map(|v| v.clamp(self.min(), self.max()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +383,19 @@ mod tests {
         let neg = Adjust { saturation: 2.0, ..Default::default() }.ctm_blob();
         let m01 = u64::from_le_bytes(neg[8..16].try_into().unwrap());
         assert!(m01 >> 63 == 1);
+    }
+
+    #[test]
+    fn field_parsing() {
+        assert_eq!(Field::Saturation.parse("140%"), Some(1.4));
+        assert_eq!(Field::Saturation.parse("999"), Some(3.0));
+        assert_eq!(Field::Temperature.parse("5000K"), Some(5000.0));
+        assert_eq!(Field::Hue.parse("-20°"), Some(-20.0));
+        assert_eq!(Field::Brightness.parse_raw("+10"), Some(0.1));
+        assert_eq!(Field::from_name("temp"), Some(Field::Temperature));
+        for f in Field::ALL {
+            assert_eq!(f.parse(&f.format(f.default_value())), Some(f.default_value()));
+        }
     }
 
     #[test]

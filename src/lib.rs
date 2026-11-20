@@ -112,6 +112,21 @@ impl Config {
     }
 }
 
+/// Presets that ship with Vision.
+pub fn builtin_presets() -> Vec<(&'static str, Adjust)> {
+    let d = Adjust::default();
+    vec![
+        ("Standard", d),
+        ("Vivid", Adjust { saturation: 1.35, contrast: 1.04, ..d }),
+        ("Punchy", Adjust { saturation: 1.7, contrast: 1.08, ..d }),
+        ("Cinema", Adjust { saturation: 0.92, contrast: 1.08, gamma: 0.92, temperature: 6100.0, ..d }),
+        ("Warm", Adjust { temperature: 5200.0, ..d }),
+        ("Cool", Adjust { temperature: 8000.0, ..d }),
+        ("Night", Adjust { temperature: 3400.0, saturation: 0.9, ..d }),
+        ("Grayscale", Adjust { saturation: 0.0, ..d }),
+    ]
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub enum State {
     #[default]
